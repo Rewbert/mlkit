@@ -9,6 +9,9 @@
 #include <errno.h>
 #include "Locks.h"
 
+#include "Region.h"
+#include "String.h"
+
 //#define PARALLEL_DEBUG
 
 #ifdef PARALLEL_DEBUG
@@ -23,6 +26,8 @@
 
 // Region page free-list mutex
 pthread_mutex_t rp_freelist_mutex;
+
+pthread_mutex_t self_mutex;
 
 // lock rp_freelist_mutex
 void
@@ -57,13 +62,62 @@ thread_init_all(void) {
   ti->thread = (pthread_t)NULL;
   ti->retval = NULL;
   ti->joined = 0;
+  ti->message[0] = 0;
+  pthread_cond_init(&(ti->condition), NULL);
+  if(pthread_mutex_init(&(ti->condition_mutex), NULL) != 0) {
+    printf("ERROR: thread_init_all: condition_mutex init has failed\n");
+    exit(-1);
+  }
   pthread_key_create(&threadinfo_key, NULL);
   thread_init(ti);
   if (pthread_mutex_init(&rp_freelist_mutex, NULL) != 0) {
     printf("ERROR: thread_init_all: mutex init has failed\n");
     exit(-1);
   }
+  if (pthread_mutex_init(&self_mutex, NULL) != 0) {
+    printf("ERROR: thread_init_all: mutex init has failed\n");
+    exit(-1);
+  }
   tdebug("[Exiting thread_init_all]\n");
+}
+
+void send(ThreadInfo* ti, int msg) {
+  pthread_mutex_lock(&(ti->condition_mutex));
+
+  if(ti->message[0]) {
+    pthread_cond_wait(&(ti->condition), &(ti->condition_mutex));
+  }
+
+  convertStringToC((StringDesc*)msg, ti->message, MSG_SIZE, 0);
+  pthread_cond_signal(&(ti->condition));
+
+  pthread_mutex_unlock(&(ti->condition_mutex));
+}
+
+int recv(Region stringRho, int exn) {
+  ThreadInfo* ti = (ThreadInfo*)pthread_getspecific(threadinfo_key);
+  pthread_mutex_lock(&(ti->condition_mutex));
+
+  if(!(ti->message[0])) {
+    pthread_cond_wait(&(ti->condition), &(ti->condition_mutex));
+  }
+
+  int res = (int) convertStringToML(stringRho, ti->message);
+  ti->message[0] = 0;
+  pthread_cond_signal(&(ti->condition));
+
+  pthread_mutex_unlock(&(ti->condition_mutex));
+  return res;
+}
+
+/*
+ * self
+ */
+ThreadInfo* self() {
+  pthread_mutex_lock(&(self_mutex));
+  ThreadInfo* ti = (ThreadInfo*)pthread_getspecific(threadinfo_key);
+  pthread_mutex_unlock(&(self_mutex));
+  return ti;
 }
 
 ThreadInfo*
@@ -174,6 +228,12 @@ thread_create(void* (*f)(ThreadInfo*), void* arg)
   ti->tid = ++thread_counter;   // atomic?
   ti->top_region = NULL;
   ti->freelist = NULL;
+  ti->message[0] = 0;
+  pthread_cond_init(&(ti->condition), NULL);
+  if(pthread_mutex_init(&(ti->condition_mutex), NULL) != 0) {
+    printf("ERROR: thread_create: condition_mutex init has failed\n");
+    exit(-1);
+  }
   if (pthread_mutex_init(&(ti->mutex), NULL) != 0) {
     printf("ERROR: thread_create: mutex init has failed\n");
     exit(-1);

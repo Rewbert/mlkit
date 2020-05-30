@@ -15,8 +15,10 @@
 
 #include <pthread.h>
 #include "Region.h"
+#include "String.h"
 
 #define NUM_THREADS	4
+#define MSG_SIZE        2048
 
 typedef struct {
   void *arg;
@@ -24,10 +26,17 @@ typedef struct {
   Ro *top_region;
   pthread_t thread;
   pthread_mutex_t mutex;
+  pthread_mutex_t condition_mutex;
+  pthread_cond_t condition;
   void* retval;
   int joined;
   Rp* freelist;
+  char message[MSG_SIZE];
 } ThreadInfo;
+
+void send(ThreadInfo* ti, int msg);
+int recv(Region stringRho, int exn);
+ThreadInfo* self();
 
 // Thread-local information; each thread has threadinfo associated
 // with it; initialize the key by calling thread_init_all.
